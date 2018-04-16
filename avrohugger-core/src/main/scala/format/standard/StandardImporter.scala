@@ -46,8 +46,10 @@ object StandardImporter extends Importer {
     schemaStore: SchemaStore,
     typeMatcher: TypeMatcher): List[Import] = {
 
-    val shapelessCopSymbolsImport = RootClass.newClass("shapeless.{:+:, CNil, Coproduct}")
-    val shapelessImport = IMPORT(shapelessCopSymbolsImport)
+    def genShapelessImport(withCoproduct: Boolean): Import = {
+      val coproductImport = if (withCoproduct) ", Coproduct" else ""
+      IMPORT(RootClass.newClass(s"shapeless.{:+:, CNil$coproductImport}"))
+    }
 
     val topLevelSchemas = getTopLevelSchemas(schemaOrProtocol, schemaStore, typeMatcher)
     val recordSchemas = getRecordSchemas(topLevelSchemas)
@@ -56,10 +58,12 @@ object StandardImporter extends Importer {
 
     schemaOrProtocol match {
       case Left(schema) => {
+        val shapelessImport = genShapelessImport(schemaContainsDefaultValue(schema))
         if (schema.getType == RECORD && requiresShapelessImports(schema, typeMatcher)) shapelessImport :: deps
         else deps
       }
       case Right(protocol) => {
+        val shapelessImport = genShapelessImport(protocolContainsDefaultValue(protocol))
         val types = protocol.getTypes.asScala.toList
         if (types.exists(s => s.getType == RECORD && requiresShapelessImports(s, typeMatcher))) shapelessImport :: deps
         else deps
@@ -67,4 +71,15 @@ object StandardImporter extends Importer {
     }
   }
 
+  private def schemaContainsDefaultValue(schema: Schema): Boolean = {
+    schema.getFields.asScala.exists { field =>
+      field.defaultValue() != null || schemaContainsDefaultValue(field.schema())
+    }
+  }
+
+  private def protocolContainsDefaultValue(protocol: Protocol): Boolean = {
+    protocol.getTypes().asScala.exists(schemaContainsDefaultValue) || protocol.getMessages.values().asScala.exists(message =>
+      schemaContainsDefaultValue(message.getRequest()) || schemaContainsDefaultValue(message.getResponse())
+    )
+  }
 }
